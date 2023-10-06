@@ -116,5 +116,96 @@ def highlights():
 def quiz():
     return render_template('quiz.html')
 
+@app.route('/me/<farmer_id>')
+def farmer_profile(farmer_id):
+    # Check if the user is logged in by verifying the 'farmer_id' in the session
+    logged_in_farmer_id = session.get('farmer_id')
+
+    # Fetch the farmer's details from MongoDB using the given ID
+    farmer_info = mongo.db.users.find_one({'_id': ObjectId(farmer_id)})
+
+    if farmer_info:
+        # If the user is logged in, allow them to view any farmer profile
+        if logged_in_farmer_id:
+            return render_template('myprofile.html', farmer_info=farmer_info)
+        else:
+            return "Access denied ! Log in first"
+    else:
+        return "Farmer not found"
+    
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        # Get the email from the form
+        email = request.form['email']
+
+        # Check if the email exists in the database
+        farmer_info = mongo.db.users.find_one({'email': email})
+
+        if farmer_info:
+            # If the email exists, store the farmer_id in the session
+            session['farmer_id'] = str(farmer_info['_id'])
+            return redirect(url_for('index'))  # Redirect to home page after successful login
+        else:
+            # If the email is not found, show an error message or redirect to a registration page
+            return "Email not found. Please sign up first."
+
+    # If the request method is GET, render the login page (signin.html)
+    return render_template('signin.html')
+    
+@app.route('/logout')
+def logout():
+    # Clear the session data (log out the user)
+    session.clear()
+    # Redirect the user to the home page
+    return redirect(url_for('index'))
+
+@app.route('/sell_crops', methods=['POST'])
+def sell_crops():
+    if 'farmer_id' in session:
+        if request.method == 'POST':
+            # Get form data
+            name =request.form['name']
+            product_image = request.files['product_image']
+            price_per_unit = request.form['price_per_unit']
+            brand = request.form['brand']
+            category = request.form['category']
+            carbon = request.form['carbon']
+            water = request.form['water']
+            recycle = request.form['recycle']
+            certify = request.form['certify']
+            india = request.form['india']
+
+            # Securely save the uploaded crop image to the defined folder
+            product_image_filename = secure_filename(product_image.filename)
+            product_image.save(os.path.join(app.config['UPLOAD_FOLDER'], product_image_filename))
+
+            # Insert trade data into the "trades" collection
+            trade_data = {
+                'seller_id': ObjectId(session['farmer_id']),
+                'name':name,
+                'product_image': product_image_filename,
+                'price_per_unit': price_per_unit,
+                'brand': brand,
+                'category': category,
+                'carbon':carbon,
+                'water':water,
+                'recycle':recycle,
+                'certify':certify,
+                'india':india
+            }
+            trade_id = mongo.db.sus_products.insert_one(trade_data).inserted_id
+
+            # Update the user's document in the "users" collection
+            # mongo.db.users.update_one(
+            #     {'_id': ObjectId(session['farmer_id'])},
+            #     {'$push': {'trade.sell': trade_id}}
+            # )
+
+            # Redirect to the profile page after submission
+            return redirect(url_for('index', farmer_id=session['farmer_id']))
+
+    return "Access denied. Please log in."
+
 if __name__ == '__main__':
     app.run(port=5500, debug=True)
