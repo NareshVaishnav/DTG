@@ -59,5 +59,57 @@ def display_map():
     # If the request method is not 'POST', return the default map page
     return render_template('mindex.html', district='', map_html='', error='')
 
+
+
+api_key = '54f5fef66dd24f61a654f4f36667b65f'
+
+#NEWS APP
+@app.route('/')
+def index():
+    return render_template('home.html')
+
+# Function to fetch news using the API
+def fetch_news(page, q):
+    current_date = datetime.datetime.now()
+    yesterday = current_date - datetime.timedelta(days=1)
+    yesterday_date = yesterday.strftime('%Y-%m-%d')
+    
+   
+    # yesterday_date = datetime.strptime('2023-07-29', '%Y-%m-%d')
+    url = f'https://newsapi.org/v2/everything?q={q}&from={yesterday_date}&language=en&pageSize=20&page={page}&sortBy=popularity'
+    headers = {'x-api-key': api_key}
+    response = requests.get(url, headers=headers)
+    news_data = response.json()
+    articles = news_data.get('articles', [])
+    cleaned_articles = [{'title': article['title'], 'description': article['description'], 'urlToImage': article['urlToImage'], 'url': article['url']} for article in articles]
+    return cleaned_articles, news_data.get('totalResults', 0)
+
+
+@app.route('/api/news', methods=['GET'])
+def get_news():
+    current_query = "Eco-Friendly Products"
+    current_page = 1
+
+    # Fetch news for the current query and page
+    articles, total_results = fetch_news(current_page, current_query)
+
+    # If no articles found, return a message
+    if total_results == 0:
+        return jsonify({'message': 'No news articles found for the query "Eco-Friendly Products" on the specified date.'})
+
+    first_five_articles = articles[:5]
+    return jsonify(first_five_articles)
+    
+@app.route('/news')
+def news():
+    return render_template('news.html')
+
+
+
+#Video
+@app.route('/highlights')
+def highlights():
+    return render_template('highlights.html')
+
 if __name__ == '__main__':
     app.run(port=5500, debug=True)
