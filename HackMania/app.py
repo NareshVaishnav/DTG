@@ -111,5 +111,10 @@ def news():
 def highlights():
     return render_template('highlights.html')
 
+#Quiz
+@app.route('/quiz')
+def quiz():
+    return render_template('quiz.html')
+
 if __name__ == '__main__':
     app.run(port=5500, debug=True)
