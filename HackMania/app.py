@@ -1,17 +1,16 @@
-from flask import Flask, render_template, request, redirect, url_for,session,jsonify
+from flask import Flask, render_template,request, redirect, url_for,session,jsonify
 from string import ascii_uppercase
 from flask_cors import CORS
 import folium
 import json
-import pandas as pd
-import numpy as np
-import requests
 import datetime
 from flask_pymongo import PyMongo
 from pymongo import MongoClient
 from werkzeug.utils import secure_filename
 from bson import ObjectId
 import os
+import requests
+import random
 
 app = Flask(__name__)
 CORS(app)
@@ -33,7 +32,24 @@ app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # Session cookie sent with same-s
 
 api_key = '54f5fef66dd24f61a654f4f36667b65f'
 
-@app.route('/')
+# Function to fetch news using the API
+def fetch_news(page, q):
+    current_date = datetime.datetime.now()
+    yesterday = current_date - datetime.timedelta(days=1)
+    yesterday_date = yesterday.strftime('%Y-%m-%d')
+    
+   
+    # yesterday_date = datetime.strptime('2023-07-29', '%Y-%m-%d')
+    url = f'https://newsapi.org/v2/everything?q={q}&from={yesterday_date}&language=en&pageSize=20&page={page}&sortBy=popularity'
+    headers = {'x-api-key': api_key}
+    response = requests.get(url, headers=headers)
+    news_data = response.json()
+    articles = news_data.get('articles', [])
+    cleaned_articles = [{'title': article['title'], 'description': article['description'], 'urlToImage': article['urlToImage'], 'url': article['url']} for article in articles]
+    return cleaned_articles, news_data.get('totalResults', 0)
+
+
+@app.route('/',methods=['GET'])
 def index():
     return render_template('index.html')
 
@@ -107,7 +123,7 @@ def display_map():
             user_info = mongo.db.Maps.find_one({'district': district, 'latitude': location['latitude'], 'longitude': location['longitude']})
             
             # Create the URL for the farmer's profile using the farmer's ID
-            # profile_url = url_for('farmer_profile', farmer_id = str(user_info['_id']))
+            profile_url = url_for('farmer_profile', farmer_id = str(user_info['_id']))
             
             # Modify the popup HTML to include the "More Info" link leading to the farmer's profile
             popup_html = f"""
@@ -122,6 +138,9 @@ def display_map():
                     <p style="margin: 0; margin-bottom: 5px; font-size: 16px;">Currently: {user_info['Open/Closed']}</p>
                     <p style="margin: 0; margin-bottom: 5px; font-size: 16px;">Pickup and Drop: {user_info['Online Grocery Pickup Service Offered']}</p>
                     <p style="margin: 0; margin-bottom: 5px; font-size: 16px;">Home Delivery: {user_info['Grocery Delivery Service Offered']} </p>
+                    <div style="text-align: center;">
+                        <a href='{profile_url}' target='_blank' style="color: #002F6C; text-decoration: none; font-size: 13px; display: inline-block;">More Info</a>
+                    </div>
                 </div>
             </div>
             """  # Add a marker with the pop-up to the map
@@ -276,8 +295,8 @@ def sell_crops():
             price_per_unit = request.form['price_per_unit']
             brand = request.form['brand']
             category = request.form['category']
-            carbon = request.form['carbon']
-            water = request.form['water']
+            carbon = float(request.form['carbon'])
+            water = float(request.form['water'])
             recycle = request.form['recycle']
             certify = request.form['certify']
             india = request.form['india']
@@ -285,6 +304,8 @@ def sell_crops():
             # Securely save the uploaded crop image to the defined folder
             product_image_filename = secure_filename(product_image.filename)
             product_image.save(os.path.join(app.config['UPLOAD_FOLDER'], product_image_filename))
+            
+            calculated_rating = str(5 - carbon/4 - water/100)
 
             # Insert trade data into the "trades" collection
             trade_data = {
@@ -298,7 +319,8 @@ def sell_crops():
                 'Water_Usage_(liters)':water,
                 'Recyclability':recycle,
                 'Certification':certify,
-                'Made_in_India':india
+                'Made_in_India':india,
+                'Sustainability_Rating': calculated_rating
             }
             mongo.db.images.insert_one(trade_data).inserted_id
 
@@ -309,7 +331,7 @@ def sell_crops():
             # )
             # Redirect to the profile page after submission
             
-            return redirect(url_for('seller', farmer_id=session['farmer_id']))
+            return redirect(url_for('s_index', farmer_id=session['farmer_id']))
 
     return "Access denied. Please log in."
 
@@ -347,12 +369,16 @@ def get_news():
     if total_results == 0:
         return jsonify({'message': 'No news articles found for the query "Eco-Friendly Products" on the specified date.'})
 
-    first_five_articles = articles[:5]
+    first_five_articles = articles[:3]
     return jsonify(first_five_articles)
 
 @app.route('/farmer')
 def farmindex():
     return render_template('findex.html')
+
+@app.route('/payment')
+def pay():
+    return render_template('gateway.html')
 
 @app.route('/highlights')
 def highlights():
@@ -432,6 +458,13 @@ def buy_crops():
 
     return render_template('buy.html', crops_list=crops_list)
 
+@app.route('/product/<product_id>')
+def product_detail(product_id):
+    # Fetch the product details from the database using the product_id
+    product = mongo.db.images.find_one({'_id': ObjectId(product_id)})
+    return render_template('product.html', product=product)
+
+
 @app.route('/add_to_list', methods=['POST'])
 def add_to_list():
     product_id = request.form.get('product_id')
@@ -461,6 +494,159 @@ def shopping_list():
     shopping_list = list(shopping_list_collection.find())
     total_price = sum([product['price_per_unit'] for product in shopping_list])
     return render_template('shopping_list.html', shopping_list=shopping_list, total_price=total_price)
+
+# @app.route("/thrift_profile/<event_id>")
+# def thrift_profile(event_id):
+#     try:
+#         # Convert the event_id parameter to an ObjectId (assuming it's stored as ObjectId in MongoDB)
+#         event_object_id = ObjectId(event_id)
+
+#         # Query the MongoDB collection for the thrift event with the specified ObjectId
+#         thrift_event = db.Thrift_1.find_one({"_id": event_object_id})
+
+#         if thrift_event is None:
+#             # Handle event not found
+#             return render_template("event_not_found.html")
+
+#         # You can then render the thrift event profile template here
+#         return render_template("thrift_event_profile.html", thrift_event=thrift_event)
+
+#     except Exception as e:
+#         # Handle any potential exceptions, e.g., invalid ObjectId format
+#         return render_template("event_not_found.html")
+
+@app.route("/thrift_profile/<event_id>")
+def event_details(event_id):
+    try:
+        # Convert the event_id parameter to an ObjectId (assuming it's stored as ObjectId in MongoDB)
+        event_object_id = ObjectId(event_id)
+
+        # Query the MongoDB collection for the event with the specified ObjectId
+        event = db.Thrift_1.find_one({"_id": event_object_id})
+
+        if event is None:
+            # Handle event not found
+            return ("event_not_found")
+    
+        return render_template("thrift_profile.html", event=event)
+    except Exception as e:
+        # Handle any potential exceptions, e.g., invalid ObjectId format
+        return render_template("thrift_profile.html")
+
+@app.route('/tmap', methods=['GET', 'POST'])
+def display_tmap():
+
+    if request.method == 'POST':
+        district = request.form['district'].strip()
+
+        # Query the MongoDB database for the latitude and longitude of the given district
+        # and store the results in a list of dictionaries
+        locations = list(mongo.db.Thrift_1.find({'district': district, 'latitude': {'$exists': True}, 'longitude': {'$exists': True}}, {'_id': 0, 'latitude': 1, 'longitude': 1}))
+        
+        if not locations:
+            return render_template('thrift_map.html', district=district, error='No records found for this district.')
+        
+        # Create a Folium map centered on the first location in the list
+        map = folium.Map(location=[locations[0]['latitude'], locations[0]['longitude']], zoom_start=10)
+        
+        # Add markers for all the locations in the list
+        for location in locations:
+            # Query the MongoDB database for the user information
+            user_info = mongo.db.Thrift_1.find_one({'district': district, 'latitude': location['latitude'], 'longitude': location['longitude']})
+            
+            # Create the URL for the thrift event profile using the event's ID
+            profile_url = url_for('event_details', event_id=str(user_info['_id']))
+            
+            # Modify the popup HTML to include the "More Info" link leading to the thrift event profile
+            popup_html = f"""
+            <div style="width: 300px;">
+                <h3 style="margin: 0; padding: 10px; background-color: #00704A; color: #FFF; text-align: center; font-size: 20px;">
+                    {user_info['name']}
+                </h3>
+                <div style="padding: 10px;">
+                    <p style="margin: 0; margin-bottom: 5px; font-size: 16px;">Timing : {user_info['time']} </p>
+                    <p style="margin: 0; margin-bottom: 5px; font-size: 16px;">Date : {user_info['date']} </p>
+                    <div style="text-align: center;">
+                        <a href='{profile_url}' target='_blank' style="color: #002F6C; text-decoration: none; font-size: 13px; display: inline-block;">More Info</a>
+                    </div>
+                </div>
+            </div>
+            """  # Add a marker with the pop-up to the map
+            folium.Marker(location=[location['latitude'], location['longitude']], popup=popup_html).add_to(map)
+        
+        # Convert the map to HTML and pass it to the template
+        map_html = map.get_root().render()
+        return render_template('thrift_map.html', district=district, map_html=map_html)
+
+    # If the request method is not 'POST', return the default map page
+    return render_template('thrift_map.html', district='', map_html='', error='')
+
+products = [
+    "Solar-Powered Portable Charger",
+    "Eco-Friendly Laptop",
+    "Energy-Efficient Refrigerator",
+    "Smart Thermostat",
+    "Recycled Plastic Speaker",
+    "Solar-Powered Desk Lamp",
+    "Energy-Efficient Washing Machine",
+    "Recycled Plastic Keyboard",
+    "Solar-Powered Phone Charger",
+    "Recycled Polyester Dress",
+    "Organic Hemp T-Shirt",
+    "Recycled PET Joggers",
+    "Organic Cotton Hoodie",
+    "Natural Hair Serum",
+    "Organic Lip Balm",
+    "Natural Face Cream",
+    "Natural Perfume",
+    "Vegan Eyebrow Pencil",
+    "Herbal Hair Mask",
+    "Sustainable Mascara"
+]
+
+# Generate random probabilistic data (example only)
+def generate_random_probabilities(products):
+    probabilities = {}
+    for product in products:
+        related_products = random.sample(products, random.randint(1, 5))
+        if product in related_products:
+            related_products.remove(product)  # Remove the product itself if it's in the list
+        probabilities[product] = {related: random.uniform(0.1, 1.0) for related in related_products}
+    return probabilities
+
+# Calculate recommendations based on probabilistic data
+def recommend_products(basket, probabilities, num_suggestions=5):
+    if not basket:
+        return []  # No basket, no recommendations
+
+    # Calculate product scores based on basket and probabilities
+    scores = {}
+    for product in basket:
+        if product in probabilities:
+            for related_product, probability in probabilities[product].items():
+                if related_product not in basket:
+                    scores[related_product] = scores.get(related_product, 0) + probability
+
+    # Sort products by score and return top recommendations
+    recommendations = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)[:num_suggestions]
+    return recommendations
+
+# Example usage:
+# Generate random probabilities (you can replace this with real data)
+probabilities = generate_random_probabilities(products)
+
+@app.route('/shopping_list')
+def shopping_list():
+    # Fetch or generate the list of recommended products
+    recommended_products = ["Solar-Powered Desk Lamp", "Solar-Powered Phone Charge", "Natural Perfume"]
+
+    shopping_list = list(shopping_list_collection.find())
+    total_price = sum([product['price_per_unit'] for product in shopping_list])
+
+    # Calculate product recommendations based on items in the shopping cart
+    recommendations = recommend_products([product['Product_Name'] for product in shopping_list], probabilities)
+
+    return render_template("shopping_list.html", products=products, recommendations=recommendations, recommended_products=recommended_products, total_price=total_price)
 
 if __name__ == '__main__':
     app.run(port=5000, debug=True)
